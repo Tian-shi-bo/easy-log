@@ -10,10 +10,10 @@ Kibana 是一个免费且开放的用户界面，能够让您对 Elasticsearch �
 easy-log web服务,旨在测试日志记录效果
 
 ## 搭建步骤
-搭建平台版本
 
-|  平台   | 版本  |  |
-|  ----  | ----  | ----|
+### 搭建平台版本
+|  平台   | 版本  |
+|  ----  | ----  |
 | linux  | centos stream 9 |
 | java  | openjdk 17 |
 | elasticsearch  | 8.6.2 |
@@ -21,6 +21,170 @@ easy-log web服务,旨在测试日志记录效果
 | kibana  | 8.6.2 |
 | VMware Workstation Pro  | 17 |
 
+### 搭建步骤  (项目所需服务均使用Docker进行安装)
+#### docker目录创建: (作者在/home 目录下操作)
+    mkdir elasticsearch
+    mkdir kibana
+    mkdir logstash
+####   ELK安装与启动：
+
+##### elasticsearch
+    容器创建:
+    docker run \
+    --name elasticsearch \
+    -p 9200:9200 -p 9300:9300 \
+    -e  "discovery.type=single-node" \
+    -e ES_JAVA_OPTS="-Xms64m -Xmx2048m" \
+    -d elasticsearch:8.6.2
+
+    将容器内的配置文件拷贝到本地: 
+
+    docker cp elasticsearch:/usr/share/elasticsearch/config/elasticsearch.yml /home/elasticsearch/config/elasticsearch.yml
+    docker cp elasticsearch:/usr/share/elasticsearch/data /home/elasticsearch/data
+    docker cp elasticsearch:/usr/share/elasticsearch/plugins /home/elasticsearch/plugins
+
+    删除原来容器:
+    docker rm -f elasticsearch
+    
+    容器创建: (挂载目录方式启动,后方便修改容器服务配置)
+    docker run \
+    --name elasticsearch \
+    --privileged=true \
+    -p 9200:9200 -p 9300:9300 \
+    -e  "discovery.type=single-node" \
+    -e ES_JAVA_OPTS="-Xms64m -Xmx2048m" \
+    -v /home/elasticsearch/config/elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml \
+    -v /home/elasticsearch/data:/usr/share/elasticsearch/data \
+    -v /home/elasticsearch/plugins:/usr/share/elasticsearch/plugins \
+    -d elasticsearch:8.6.2
+    
+    服务启动:
+    docker start elasticsearch
+
+#####   kibana
+     容器创建: (使用汉化 "I18N_LOCALE=zh-CN")
+    docker run
+    --name kibana \
+    -e "I18N_LOCALE=zh-CN" \
+    -p 5601:5601 \
+    -v /home/kibana/config:/usr/share/kibana/config \
+    -d kibana:8.6.2
+
+
+    将容器内的配置文件拷贝到本地:
+    docker cp kibana:/usr/share/kibana/config /home/kibana/config
+
+    进入/home/kibana/config目录，修改kibana.yml配置文件,
+    将elasticsearch.hosts的配置修改为elasticsearch地址:
+
+    # Default Kibana configuration for docker target
+    server.host: "0"
+    server.shutdownTimeout: "5s"
+    # 配置elasticsearch地址,如果是部署在本地,不能使用localhost,一定要配置ip,否则连接失败
+    elasticsearch.hosts: [ "http://192.168.42.128:9200" ]
+    monitoring.ui.container.elasticsearch.enabled: true
+
+    删除原来容器:
+    docker rm -f kibana
+    
+    容器创建:
+    docker run 
+    --name kibana \
+    -p 5601:5601 \
+    --privileged=true \
+    -v /home/kibana/config:/usr/share/kibana/config \
+    -d kibana:8.6.2
+
+    服务启动:
+    docker start kibana
+
+##### 待启动成功后，在浏览器中输入http://ip:5601/
+
+
+#### logstash
+    容器创建:
+    docker run \
+    --name logstash \
+    --privileged=true \
+    -p 5044:5044 \
+    -p 9400:9400 \
+    -d logstash:8.6.2
+
+
+    将容器内的配置文件拷贝到本地:
+    docker cp logstash:/usr/share/logstash/config/ /home/logstash/config
+    docker cp logstash:/usr/share/logstash/pipeline /home/logstash/pipeline
+    docker cp logstash:/usr/share/logstash/data /home/logstash/data
+
+    进入/home/logstash/config目录，修改logstash.yml配置文件:
+
+    ----------------------------------------------
+    node.name: logstash-203
+    http.host: "0.0.0.0"
+    xpack.monitoring.elasticsearch.hosts: [ "http://192.168.42.128:9200" ]
+    # 日志格式 json/plain
+    log.format: json
+    # 日志文件目录配置
+    path.logs: /usr/share/logstash/logs
+    ----------------------------------------------
+
+    修改pipelines.yml配置文件
+    这个配置文件主要是配置输入、过滤和输出，这些部分均会由 Logstash 管道予以执行:
+
+    ----------------------------------------------
+    - pipeline.id: main
+      # 该配置会读取pipeline目录下所有的conf文件
+      path.config: "/usr/share/logstash/pipeline/*.conf"
+    ----------------------------------------------
+    删除原来容器:
+    docker rm -f logstash
+    
+    容器创建: 
+    docker run \
+    --name logstash \
+    --privileged=true \
+    -p 5044:5044 \
+    -p 9400:9400 \
+    -v /home/logstash/config/:/usr/share/logstash/config \
+    -v /home/logstash/pipeline:/usr/share/logstash/pipeline \
+    -v /home/logstash/data:/usr/share/logstash/data \
+    -d logstash:8.6.2
+
+    创建配置文件,在/home/logstash/pipeline目录下创建logstash.conf文件
+    ----------------------------------------------
+    input {
+        beats {
+            port => 5044
+        }
+    }
+    output {
+        stdout {
+            codec => rubydebug
+        }
+        elasticsearch {
+            action => "index"
+            # 这里是es的地址，多个es要写成数组的形式
+            hosts  => "192.168.42.128:9200"
+            # 索引采用服务app名称加环境profile
+            index  => "%{app}-%{profile}-log"
+            # 超时时间
+            timeout => 300
+        }
+    }
+    ----------------------------------------------
+    服务启动:
+    docker start logstash
+
+### Springboot整合    
+    <dependency>
+        <groupId>ch.qos.logback</groupId>
+        <artifactId>logback-classic</artifactId>
+    </dependency>
+    <dependency>
+        <groupId>net.logstash.logback</groupId>
+        <artifactId>logstash-logback-encoder</artifactId>
+        <version>7.3</version>
+    </dependency>
 #### 备注
 
 
