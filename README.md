@@ -175,7 +175,8 @@ easy-log web服务,旨在测试日志记录效果
     服务启动:
     docker start logstash
 
-### Springboot整合    
+### Springboot整合 
+#### 依赖    
     <dependency>
         <groupId>ch.qos.logback</groupId>
         <artifactId>logback-classic</artifactId>
@@ -185,6 +186,111 @@ easy-log web服务,旨在测试日志记录效果
         <artifactId>logstash-logback-encoder</artifactId>
         <version>7.3</version>
     </dependency>
+#### resource目录下创建logback-spring.xml文件
+    <?xml version="1.0" encoding="UTF-8"?>
+    <configuration scan="true" scanPeriod="60 seconds">
+
+    <contextName>logback</contextName>
+    <!--从SpringBoot配置文件读取项目名，环境，以及logstash地址-->
+    <springProperty scope="context" name="springAppName" source="spring.application.name"/>
+    <springProperty scope="context" name="springProfile" source="spring.profiles.active"/>
+    <springProperty scope="context" name="logstashAddress" source="logging.logstash.address"/>
+
+    <!--格式化输出：%d:表示日期  %thread:表示线程名  %-5level:级别从左显示5个字符宽度  %msg:日志消息   %n:是换行符-->
+    <property name="logPattern"
+              value="%d{yyyy-MM-dd HH:mm:ss.SSS} [%-5p][${springAppName:-}][${PID:- }][%X{X-TraceId:-}][%t][%X{domain:-}] --- %logger-%line : %msg %n" />
+
+    <!--输出到控制台-->
+    <appender name="console" class="ch.qos.logback.core.ConsoleAppender">
+        <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+            <level>INFO</level>
+        </filter>
+        <withJansi>false</withJansi>
+        <encoder>
+            <pattern>${logPattern}</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+    </appender>
+
+
+    <!--配置INFO输出到logstah-->
+    <appender name="LOGSTASH_INFO" class="net.logstash.logback.appender.LogstashTcpSocketAppender">
+        <!--配置logstash地址-->
+        <destination>${logstashAddress}</destination>
+        <!--日志文件输出格式-->
+        <encoder class="net.logstash.logback.encoder.LoggingEventCompositeJsonEncoder">
+            <providers>
+                <pattern>
+                    <pattern>
+                        {
+                        <!--设置项目-->
+                        "app": "${springAppName:-}",
+                        <!--设置环境-->
+                        "profile": "${springProfile:-}",
+                        <!--设置等级-->
+                        "level": "%level",
+                        <!--设置traceId-->
+                        "trace_id": "%X{X-TraceId:-}",
+                        <!--设置thread-->
+                        "thread": "%t",
+                        <!--设置类名-->
+                        "class": "%c",
+                        <!--设置消息-->
+                        "msg": "%msg",
+                        <!--设置输出日期-->
+                        "dateTime": "%date{yyyy-MM-dd HH:mm:ss.SSS}",
+                        <!--设置消息体-->
+                        "massage": "%d{yyyy-MM-dd HH:mm:ss.SSS} [%-5p][${springAppName:-}][${PID:- }][%X{X-TraceId:-}][%t][%X{domain:-}] --- %logger-%line : %msg %n"
+                        }
+                    </pattern>
+                </pattern>
+            </providers>
+        </encoder>
+    </appender>
+
+    <root level="info">
+        <appender-ref ref="LOGSTASH_INFO"/>
+        <appender-ref ref="console"/>
+    </root>
+
+    </configuration>
+#### application.yml
+    spring:
+        application:
+            # 日志索引用到app    
+            name: easy-log
+    profiles:
+        # 日志索引用到profile
+        active: dev
+    server:
+        port: 80
+    logging:
+        # 日志文件地址
+        config: classpath:logback-spring.xml
+        # 配置Logstash地址
+        logstash:
+            address: 192.168.42.128:9400
+        level:
+            root: info
+#### 启动项目
+    找到侧边导航栏  Stack Management
+![img.png](img.png)
+    点开后找到索引管理 可以看到本服务日志 easy-log-dev-log 
+![img_1.png](img_1.png)
+    回到侧边栏到Discover
+![img_2.png](img_2.png)
+    创建数据视图
+![img_3.png](img_3.png)
+    将右侧存在索引复制到输入框后保存
+![img_4.png](img_4.png)
+![img_5.png](img_5.png)
+调用测试接口 http://localhost/easy/log/myTestInfo
+![img_8.png](img_8.png)
+    添加字段massage展示消息体
+![img_6.png](img_6.png)
+    与控制台日志匹配测试
+![img_7.png](img_7.png)
+
 #### 备注
 
 
